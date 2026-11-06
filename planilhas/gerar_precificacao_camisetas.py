@@ -1,42 +1,57 @@
 #!/usr/bin/env python3
-"""Gera planilha Los Hermanos: Dashboard + Inventário."""
+"""Gera planilha Los Hermanos: Dashboard moderno + Inventário com faixas de preço."""
 
 from datetime import date
 from pathlib import Path
 
 from openpyxl import Workbook
+from openpyxl.formatting.rule import FormulaRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 
 OUT = Path(__file__).resolve().parent / "precificacao-camisetas.xlsx"
 
-HEADER_FILL = PatternFill("solid", fgColor="1F4E79")
-HEADER_FONT = Font(color="FFFFFF", bold=True, size=11)
-PARAM_FILL = PatternFill("solid", fgColor="E7EEF7")
-CARD_FILL = PatternFill("solid", fgColor="F5F8FC")
-ACCENT_FILL = PatternFill("solid", fgColor="D6EAF8")
-PROFIT_FILL = PatternFill("solid", fgColor="D5F5E3")
+# Cores
+HEADER_FILL = PatternFill("solid", fgColor="0F2C4C")
+HEADER_FONT = Font(color="FFFFFF", bold=True, size=10)
+PARAM_FILL = PatternFill("solid", fgColor="E8EEF6")
+CARD_BG = PatternFill("solid", fgColor="F7F9FC")
+CARD_EDGE = PatternFill("solid", fgColor="E3EAF3")
+NOW_FILL = PatternFill("solid", fgColor="E8F6F1")
+QUERY_FILL = PatternFill("solid", fgColor="EEF2FF")
+TOTAL_FILL = PatternFill("solid", fgColor="EAF2FB")
+YELLOW_PASTEL = PatternFill("solid", fgColor="FFF3B0")  # 0%
+BLUE_PASTEL = PatternFill("solid", fgColor="D6EAF8")  # 15%
+GREEN_PASTEL = PatternFill("solid", fgColor="D5F5E3")  # 30%
+PURPLE_PASTEL = PatternFill("solid", fgColor="E8DAEF")  # >30%
 WARN_FILL = PatternFill("solid", fgColor="FCF3CF")
-THIN = Side(style="thin", color="CCCCCC")
+THIN = Side(style="thin", color="D0D7E2")
 BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 CURRENCY = '"R$" #,##0.00'
 PCT = "0%"
 DATE_FMT = "DD/MM/YYYY"
 
 # Inventário columns (1-based)
+# A entrada, B modelo, C tamanho, D medida, E autenticidade,
+# F mercado, G compra, H restauração,
+# I preço 0%, J preço 15%, K sugerido 30%,
+# L venda, M data venda, N lucro
 COL = {
-    "entrada": 1,  # A Data de entrada
-    "modelo": 2,  # B
-    "tamanho": 3,  # C
-    "medida": 4,  # D
-    "autenticidade": 5,  # E Original / Réplica
-    "mercado": 6,  # F
-    "compra": 7,  # G
-    "restauracao": 8,  # H
-    "sugerido": 9,  # I
-    "venda": 10,  # J
-    "data_venda": 11,  # K
-    "lucro": 12,  # L
+    "entrada": 1,
+    "modelo": 2,
+    "tamanho": 3,
+    "medida": 4,
+    "autenticidade": 5,
+    "mercado": 6,
+    "compra": 7,
+    "restauracao": 8,
+    "preco_0": 9,
+    "preco_15": 10,
+    "sugerido_30": 11,
+    "venda": 12,
+    "data_venda": 13,
+    "lucro": 14,
 }
 
 HEADERS = [
@@ -48,14 +63,17 @@ HEADERS = [
     "Valor de mercado",
     "Custo de compra",
     "Custo de restauração",
-    "Valor sugerido",
+    "Preço mín. (0% lucro)",
+    "Preço 15% lucro",
+    "Valor sugerido (30%)",
     "Valor de venda",
     "Data da venda",
     "Lucro bruto real",
 ]
 
 FIRST_DATA = 6
-LAST_DATA = 105  # 100 linhas de inventário
+LAST_DATA = 105
+NCOLS = len(HEADERS)
 
 
 def style_header_row(ws, row: int, ncols: int) -> None:
@@ -67,9 +85,61 @@ def style_header_row(ws, row: int, ncols: int) -> None:
         cell.border = BORDER
 
 
-def money(cell) -> None:
-    cell.number_format = CURRENCY
-    cell.border = BORDER
+def inv_sum_costs(has_modelo: bool = True) -> str:
+    base = f'(Inventário!B{FIRST_DATA}:B{LAST_DATA}<>"")*(Inventário!G{FIRST_DATA}:G{LAST_DATA}+Inventário!H{FIRST_DATA}:H{LAST_DATA})'
+    return f"=SUMPRODUCT({base})"
+
+
+def month_inv(start_cell: str, end_cell: str) -> str:
+    return (
+        f'=SUMPRODUCT((Inventário!B{FIRST_DATA}:B{LAST_DATA}<>"")'
+        f"*(Inventário!A{FIRST_DATA}:A{LAST_DATA}>={start_cell})"
+        f"*(Inventário!A{FIRST_DATA}:A{LAST_DATA}<={end_cell})"
+        f"*(Inventário!G{FIRST_DATA}:G{LAST_DATA}+Inventário!H{FIRST_DATA}:H{LAST_DATA}))"
+    )
+
+
+def month_profit(start_cell: str, end_cell: str) -> str:
+    return (
+        f"=SUMPRODUCT((Inventário!M{FIRST_DATA}:M{LAST_DATA}>={start_cell})"
+        f"*(Inventário!M{FIRST_DATA}:M{LAST_DATA}<={end_cell})"
+        f'*(Inventário!L{FIRST_DATA}:L{LAST_DATA}<>"")'
+        f"*(Inventário!L{FIRST_DATA}:L{LAST_DATA}"
+        f"-(Inventário!G{FIRST_DATA}:G{LAST_DATA}+Inventário!H{FIRST_DATA}:H{LAST_DATA})))"
+    )
+
+
+def month_sales(start_cell: str, end_cell: str) -> str:
+    return (
+        f"=SUMPRODUCT((Inventário!M{FIRST_DATA}:M{LAST_DATA}>={start_cell})"
+        f"*(Inventário!M{FIRST_DATA}:M{LAST_DATA}<={end_cell})"
+        f'*(Inventário!L{FIRST_DATA}:L{LAST_DATA}<>"")'
+        f"*(Inventário!L{FIRST_DATA}:L{LAST_DATA}))"
+    )
+
+
+def capital_disponivel() -> str:
+    # venda - lucro = custos recuperados
+    return (
+        f'=SUMPRODUCT((Inventário!L{FIRST_DATA}:L{LAST_DATA}<>"")'
+        f"*(Inventário!G{FIRST_DATA}:G{LAST_DATA}+Inventário!H{FIRST_DATA}:H{LAST_DATA}))"
+    )
+
+
+def capital_estoque() -> str:
+    return (
+        f'=SUMPRODUCT((Inventário!B{FIRST_DATA}:B{LAST_DATA}<>"")'
+        f'*(Inventário!L{FIRST_DATA}:L{LAST_DATA}="")'
+        f"*(Inventário!G{FIRST_DATA}:G{LAST_DATA}+Inventário!H{FIRST_DATA}:H{LAST_DATA}))"
+    )
+
+
+def lucro_total() -> str:
+    return (
+        f'=SUMPRODUCT((Inventário!L{FIRST_DATA}:L{LAST_DATA}<>"")'
+        f"*(Inventário!L{FIRST_DATA}:L{LAST_DATA}"
+        f"-(Inventário!G{FIRST_DATA}:G{LAST_DATA}+Inventário!H{FIRST_DATA}:H{LAST_DATA})))"
+    )
 
 
 def build_inventario(wb: Workbook) -> None:
@@ -78,40 +148,52 @@ def build_inventario(wb: Workbook) -> None:
     ws["A1"] = "Taxa da plataforma (%)"
     ws["B1"] = 0.10
     ws["B1"].number_format = PCT
-    ws["A2"] = "Lucro desejado sobre o custo (%)"
+    ws["A2"] = "Lucro alvo padrão (coluna verde)"
     ws["B2"] = 0.30
     ws["B2"].number_format = PCT
-    for row in (1, 2):
-        ws[f"A{row}"].font = Font(bold=True)
-        ws[f"A{row}"].fill = PARAM_FILL
-        ws[f"B{row}"].fill = PARAM_FILL
-        ws[f"B{row}"].border = BORDER
+    ws["C1"] = "Lucro 15% (coluna azul)"
+    ws["D1"] = 0.15
+    ws["D1"].number_format = PCT
+    ws["C2"] = "Lucro 0% (coluna amarela)"
+    ws["D2"] = 0.00
+    ws["D2"].number_format = PCT
+
+    for addr in ("A1", "A2", "C1", "C2"):
+        ws[addr].font = Font(bold=True)
+        ws[addr].fill = PARAM_FILL
+    for addr in ("B1", "B2", "D1", "D2"):
+        ws[addr].fill = PARAM_FILL
+        ws[addr].border = BORDER
 
     ws["A3"] = (
-        "Valor sugerido = (custo de compra + custo de restauração) × (1 + taxa + lucro). "
-        "Lucro bruto real = valor de venda − (compra + restauração). "
-        "Altere B1 e B2 para recalcular os sugeridos."
+        "Amarelo = preço sem lucro (só cobre taxa + custos). "
+        "Azul = 15% de lucro. Verde = 30% (sugerido). "
+        "Lucro bruto real = venda − (compra + restauração); a cor segue a margem atingida."
     )
-    ws.merge_cells("A3:L3")
+    ws.merge_cells("A3:N3")
     ws["A3"].font = Font(italic=True, color="555555", size=10)
 
     header_row = 5
     for col, title in enumerate(HEADERS, start=1):
         ws.cell(header_row, col, title)
-    style_header_row(ws, header_row, len(HEADERS))
-    ws.row_dimensions[header_row].height = 32
+    style_header_row(ws, header_row, NCOLS)
+    # Color header accents for price bands
+    ws.cell(header_row, COL["preco_0"]).fill = PatternFill("solid", fgColor="C9A227")
+    ws.cell(header_row, COL["preco_15"]).fill = PatternFill("solid", fgColor="2E86AB")
+    ws.cell(header_row, COL["sugerido_30"]).fill = PatternFill("solid", fgColor="1E8449")
+    ws.row_dimensions[header_row].height = 36
 
     examples = [
-        # entrada, modelo, tamanho, medida, autenticidade, mercado, compra, restauro, venda, data_venda
         (date(2026, 1, 10), "Brasil 2022 — Home", "G", "Largura 54 cm", "Original", 350.0, 180.0, 25.0, 280.0, date(2026, 2, 5)),
         (date(2026, 2, 1), "Flamengo retrô", "M", "Largura 50 cm", "Réplica", 120.0, 45.0, 10.0, None, None),
         (date(2026, 2, 15), "Real Madrid away", "GG", "Largura 58 cm", "Original", 400.0, 220.0, 30.0, None, None),
+        (date(2026, 3, 1), "Holanda vintage", "G", "Largura 55 cm", "Original", 280.0, 90.0, 15.0, 150.0, date.today()),
     ]
 
     for i, row_data in enumerate(examples):
         r = FIRST_DATA + i
         entrada, modelo, tamanho, medida, auth, mercado, compra, restauro, venda, data_venda = row_data
-        ws.cell(r, COL["entrada"], entrada).number_format = DATE_FMT
+        ws.cell(r, COL["entrada"], entrada)
         ws.cell(r, COL["modelo"], modelo)
         ws.cell(r, COL["tamanho"], tamanho)
         ws.cell(r, COL["medida"], medida)
@@ -122,192 +204,266 @@ def build_inventario(wb: Workbook) -> None:
         if venda is not None:
             ws.cell(r, COL["venda"], venda)
         if data_venda is not None:
-            ws.cell(r, COL["data_venda"], data_venda).number_format = DATE_FMT
+            ws.cell(r, COL["data_venda"], data_venda)
 
-    # Preenche fórmulas e formatos em todas as linhas de dados
     for r in range(FIRST_DATA, LAST_DATA + 1):
-        # Valor sugerido
-        sug = ws.cell(r, COL["sugerido"])
-        sug.value = f"=(G{r}+H{r})*(1+$B$1+$B$2)"
-        # Lucro bruto real (só faz sentido com venda preenchida)
-        lucro = ws.cell(r, COL["lucro"])
-        lucro.value = f'=IF(J{r}="","",J{r}-(G{r}+H{r}))'
+        # 0%: (custo)*(1+taxa+0)
+        ws.cell(r, COL["preco_0"], f"=(G{r}+H{r})*(1+$B$1+$D$2)")
+        # 15%
+        ws.cell(r, COL["preco_15"], f"=(G{r}+H{r})*(1+$B$1+$D$1)")
+        # 30% sugerido
+        ws.cell(r, COL["sugerido_30"], f"=(G{r}+H{r})*(1+$B$1+$B$2)")
+        # Lucro
+        ws.cell(r, COL["lucro"], f'=IF(L{r}="","",L{r}-(G{r}+H{r}))')
 
-        for c in range(1, 13):
+        for c in range(1, NCOLS + 1):
             ws.cell(r, c).border = BORDER
-        for c in (COL["mercado"], COL["compra"], COL["restauracao"], COL["sugerido"], COL["venda"], COL["lucro"]):
+
+        for c in (
+            COL["mercado"],
+            COL["compra"],
+            COL["restauracao"],
+            COL["preco_0"],
+            COL["preco_15"],
+            COL["sugerido_30"],
+            COL["venda"],
+            COL["lucro"],
+        ):
             ws.cell(r, c).number_format = CURRENCY
+
         ws.cell(r, COL["entrada"]).number_format = DATE_FMT
         ws.cell(r, COL["data_venda"]).number_format = DATE_FMT
 
-    # Validações
-    dv_auth = DataValidation(
-        type="list",
-        formula1='"Original,Réplica"',
-        allow_blank=True,
+        # Pastel fills on price columns
+        ws.cell(r, COL["preco_0"]).fill = YELLOW_PASTEL
+        ws.cell(r, COL["preco_15"]).fill = BLUE_PASTEL
+        ws.cell(r, COL["sugerido_30"]).fill = GREEN_PASTEL
+
+    # Conditional formatting on Lucro (col N) by margin = lucro/(G+H)
+    # margin <= 0 → yellow
+    # 0.15 <= margin < 0.30 → blue
+    # 0.30 <= margin <= 0.30... use >=0.30 and <=0.30 for green approximately: >=0.30 and not >0.30
+    # > 0.30 → purple
+    lucro_range = f"N{FIRST_DATA}:N{LAST_DATA}"
+
+    # Order matters: more specific first. openpyxl applies in order; last matching can win depending on stopIfTrue
+    # Use stopIfTrue=True on each
+    ws.conditional_formatting.add(
+        lucro_range,
+        FormulaRule(
+            formula=[f'AND(N{FIRST_DATA}<>"",(G{FIRST_DATA}+H{FIRST_DATA})>0,N{FIRST_DATA}/(G{FIRST_DATA}+H{FIRST_DATA})>0.3)'],
+            fill=PURPLE_PASTEL,
+            stopIfTrue=True,
+        ),
     )
-    dv_auth.error = "Escolha Original ou Réplica"
-    dv_auth.errorTitle = "Autenticidade"
+    ws.conditional_formatting.add(
+        lucro_range,
+        FormulaRule(
+            formula=[f'AND(N{FIRST_DATA}<>"",(G{FIRST_DATA}+H{FIRST_DATA})>0,N{FIRST_DATA}/(G{FIRST_DATA}+H{FIRST_DATA})>=0.3)'],
+            fill=GREEN_PASTEL,
+            stopIfTrue=True,
+        ),
+    )
+    ws.conditional_formatting.add(
+        lucro_range,
+        FormulaRule(
+            formula=[f'AND(N{FIRST_DATA}<>"",(G{FIRST_DATA}+H{FIRST_DATA})>0,N{FIRST_DATA}/(G{FIRST_DATA}+H{FIRST_DATA})>=0.15)'],
+            fill=BLUE_PASTEL,
+            stopIfTrue=True,
+        ),
+    )
+    ws.conditional_formatting.add(
+        lucro_range,
+        FormulaRule(
+            formula=[f'AND(N{FIRST_DATA}<>"",(G{FIRST_DATA}+H{FIRST_DATA})>0,N{FIRST_DATA}/(G{FIRST_DATA}+H{FIRST_DATA})<=0)'],
+            fill=YELLOW_PASTEL,
+            stopIfTrue=True,
+        ),
+    )
+
+    dv_auth = DataValidation(type="list", formula1='"Original,Réplica"', allow_blank=True)
     ws.add_data_validation(dv_auth)
     dv_auth.add(f"E{FIRST_DATA}:E{LAST_DATA}")
 
-    dv_size = DataValidation(
-        type="list",
-        formula1='"P,M,G,GG,XGG"',
-        allow_blank=True,
-    )
+    dv_size = DataValidation(type="list", formula1='"P,M,G,GG,XGG"', allow_blank=True)
     ws.add_data_validation(dv_size)
     dv_size.add(f"C{FIRST_DATA}:C{LAST_DATA}")
 
     widths = {
-        "A": 15,
-        "B": 28,
-        "C": 10,
-        "D": 16,
-        "E": 14,
-        "F": 16,
-        "G": 15,
-        "H": 18,
-        "I": 15,
+        "A": 14,
+        "B": 26,
+        "C": 9,
+        "D": 14,
+        "E": 13,
+        "F": 15,
+        "G": 14,
+        "H": 16,
+        "I": 16,
         "J": 15,
-        "K": 14,
-        "L": 16,
+        "K": 16,
+        "L": 14,
+        "M": 13,
+        "N": 15,
     }
     for col, width in widths.items():
         ws.column_dimensions[col].width = width
 
+    # Legend
+    ws["A4"] = "Legenda preços:"
+    ws["A4"].font = Font(bold=True, size=9)
+    ws["B4"] = "0% — amarelo"
+    ws["B4"].fill = YELLOW_PASTEL
+    ws["C4"] = "15% — azul"
+    ws["C4"].fill = BLUE_PASTEL
+    ws["D4"] = "30% — verde"
+    ws["D4"].fill = GREEN_PASTEL
+    ws["E4"] = "lucro >30% — roxo"
+    ws["E4"].fill = PURPLE_PASTEL
+
     ws.freeze_panes = "A6"
-    ws.auto_filter.ref = f"A5:L{LAST_DATA}"
+    ws.auto_filter.ref = f"A5:{get_column_letter(NCOLS)}{LAST_DATA}"
+
+
+def _kpi_block(ws, start_row: int, start_col: int, title: str, formula: str, subtitle: str, fill: PatternFill) -> None:
+    title_cell = ws.cell(start_row, start_col, title)
+    title_cell.font = Font(bold=True, size=10, color="5D6D7E")
+    value_cell = ws.cell(start_row + 1, start_col, formula)
+    value_cell.number_format = CURRENCY
+    value_cell.font = Font(bold=True, size=18, color="1A1A1A")
+    value_cell.fill = fill
+    value_cell.border = BORDER
+    value_cell.alignment = Alignment(horizontal="left", vertical="center")
+    ws.merge_cells(
+        start_row=start_row + 1,
+        start_column=start_col,
+        end_row=start_row + 1,
+        end_column=start_col + 1,
+    )
+    ws.row_dimensions[start_row + 1].height = 32
+    sub = ws.cell(start_row + 2, start_col, subtitle)
+    sub.font = Font(italic=True, size=9, color="7F8C8D")
+    ws.merge_cells(
+        start_row=start_row + 2,
+        start_column=start_col,
+        end_row=start_row + 2,
+        end_column=start_col + 1,
+    )
 
 
 def build_dashboard(wb: Workbook) -> None:
     ws = wb.create_sheet("Dashboard", 0)
 
-    ws["A1"] = "Los Hermanos — Dashboard"
-    ws["A1"].font = Font(bold=True, size=18, color="1F4E79")
-    ws.merge_cells("A1:D1")
+    ws["A1"] = "Los Hermanos"
+    ws["A1"].font = Font(bold=True, size=22, color="0F2C4C")
+    ws["A2"] = "Dashboard de inventário e vendas"
+    ws["A2"].font = Font(size=11, color="5D6D7E")
 
-    ws["A3"] = "Mês de referência"
-    ws["A3"].font = Font(bold=True)
-    ws["B3"] = date(2026, 2, 1)  # qualquer dia do mês; usuário altera
-    ws["B3"].number_format = "MMM/YYYY"
-    ws["B3"].fill = WARN_FILL
-    ws["B3"].border = BORDER
-    ws["C3"] = "← coloque qualquer dia do mês desejado"
-    ws["C3"].font = Font(italic=True, color="666666", size=10)
+    # —— Visão geral (sempre) ——
+    ws["A4"] = "VISÃO GERAL"
+    ws["A4"].font = Font(bold=True, size=12, color="FFFFFF")
+    ws["A4"].fill = HEADER_FILL
+    ws.merge_cells("A4:D4")
 
-    # Helper dates
-    ws["A4"] = "Início do mês"
-    ws["B4"] = "=DATE(YEAR(B3),MONTH(B3),1)"
-    ws["B4"].number_format = DATE_FMT
-    ws["A5"] = "Fim do mês"
-    ws["B5"] = "=EOMONTH(B3,0)"
-    ws["B5"].number_format = DATE_FMT
-    for r in (4, 5):
-        ws[f"A{r}"].font = Font(color="888888", size=9)
-        ws[f"B{r}"].font = Font(color="888888", size=9)
+    _kpi_block(ws, 5, 1, "Investimento total", inv_sum_costs(), "Compra + restauração de todas as peças", TOTAL_FILL)
+    _kpi_block(ws, 5, 3, "Investimento disponível", capital_disponivel(), "Custos recuperados nas vendas (venda − lucro)", WARN_FILL)
+    _kpi_block(ws, 9, 1, "Capital em estoque", capital_estoque(), "Custos de peças ainda não vendidas", CARD_BG)
+    _kpi_block(ws, 9, 3, "Lucro bruto total", lucro_total(), "Soma do lucro de todas as vendas", GREEN_PASTEL)
 
-    inv_total = f'=SUMPRODUCT((Inventário!B{FIRST_DATA}:B{LAST_DATA}<>"")*(Inventário!G{FIRST_DATA}:G{LAST_DATA}+Inventário!H{FIRST_DATA}:H{LAST_DATA}))'
-    inv_mes = (
-        f'=SUMPRODUCT((Inventário!B{FIRST_DATA}:B{LAST_DATA}<>"")'
-        f"*(Inventário!A{FIRST_DATA}:A{LAST_DATA}>=$B$4)"
-        f"*(Inventário!A{FIRST_DATA}:A{LAST_DATA}<=$B$5)"
-        f"*(Inventário!G{FIRST_DATA}:G{LAST_DATA}+Inventário!H{FIRST_DATA}:H{LAST_DATA}))"
-    )
-    lucro_mes = (
-        f'=SUMPRODUCT((Inventário!K{FIRST_DATA}:K{LAST_DATA}>=$B$4)'
-        f"*(Inventário!K{FIRST_DATA}:K{LAST_DATA}<=$B$5)"
-        f"*(Inventário!J{FIRST_DATA}:J{LAST_DATA}<>\"\")"
-        f"*(Inventário!J{FIRST_DATA}:J{LAST_DATA}-(Inventário!G{FIRST_DATA}:G{LAST_DATA}+Inventário!H{FIRST_DATA}:H{LAST_DATA})))"
-    )
-    # Capital recuperado / investimento disponível = venda - lucro = custos das peças vendidas
-    capital_disp = (
-        f'=SUMPRODUCT((Inventário!J{FIRST_DATA}:J{LAST_DATA}<>"")'
-        f"*(Inventário!G{FIRST_DATA}:G{LAST_DATA}+Inventário!H{FIRST_DATA}:H{LAST_DATA}))"
-    )
-    # Also useful: capital ainda parado em estoque
-    capital_estoque = (
-        f'=SUMPRODUCT((Inventário!B{FIRST_DATA}:B{LAST_DATA}<>"")'
-        f'*(Inventário!J{FIRST_DATA}:J{LAST_DATA}="")'
-        f"*(Inventário!G{FIRST_DATA}:G{LAST_DATA}+Inventário!H{FIRST_DATA}:H{LAST_DATA}))"
-    )
-    lucro_total = (
-        f'=SUMPRODUCT((Inventário!J{FIRST_DATA}:J{LAST_DATA}<>"")'
-        f"*(Inventário!J{FIRST_DATA}:J{LAST_DATA}-(Inventário!G{FIRST_DATA}:G{LAST_DATA}+Inventário!H{FIRST_DATA}:H{LAST_DATA})))"
-    )
-    vendas_mes = (
-        f'=SUMPRODUCT((Inventário!K{FIRST_DATA}:K{LAST_DATA}>=$B$4)'
-        f"*(Inventário!K{FIRST_DATA}:K{LAST_DATA}<=$B$5)"
-        f"*(Inventário!J{FIRST_DATA}:J{LAST_DATA}<>\"\")"
-        f"*(Inventário!J{FIRST_DATA}:J{LAST_DATA}))"
-    )
+    # —— Mês atual (automático) ——
+    ws["A14"] = "MÊS ATUAL (automático)"
+    ws["A14"].font = Font(bold=True, size=12, color="FFFFFF")
+    ws["A14"].fill = PatternFill("solid", fgColor="148F77")
+    ws.merge_cells("A14:D14")
 
-    metrics = [
-        (8, "Investimento total", "Tudo que já entrou de custo (compra + restauração)", inv_total, ACCENT_FILL),
-        (11, "Investido no mês", "Custos das peças que entraram no mês de referência", inv_mes, CARD_FILL),
-        (14, "Lucro no mês", "Lucro bruto real das vendas no mês (venda − custos)", lucro_mes, PROFIT_FILL),
-        (
-            17,
-            "Investimento disponível",
-            "Valor de venda − lucro = custos recuperados nas vendas (capital para reinvestir)",
-            capital_disp,
-            WARN_FILL,
-        ),
+    ws["A15"] = "Período"
+    ws["A15"].font = Font(bold=True, size=9, color="5D6D7E")
+    ws["B15"] = '=TEXT(TODAY(),"MMMM/YYYY")'
+    ws["B15"].font = Font(bold=True, size=12, color="0E6655")
+    ws["B15"].fill = NOW_FILL
+    ws["B15"].border = BORDER
+
+    # Hidden helpers for current month
+    ws["F14"] = "Início mês atual"
+    ws["G14"] = '=DATE(YEAR(TODAY()),MONTH(TODAY()),1)'
+    ws["F15"] = "Fim mês atual"
+    ws["G15"] = "=EOMONTH(TODAY(),0)"
+    for addr in ("F14", "F15", "G14", "G15"):
+        ws[addr].font = Font(color="CCCCCC", size=8)
+    ws["G14"].number_format = DATE_FMT
+    ws["G15"].number_format = DATE_FMT
+
+    _kpi_block(ws, 16, 1, "Investido neste mês", month_inv("$G$14", "$G$15"), "Peças com entrada no mês atual", NOW_FILL)
+    _kpi_block(ws, 16, 3, "Lucro neste mês", month_profit("$G$14", "$G$15"), "Vendas concluídas no mês atual", GREEN_PASTEL)
+    _kpi_block(ws, 20, 1, "Vendas neste mês", month_sales("$G$14", "$G$15"), "Soma dos valores de venda do mês", BLUE_PASTEL)
+
+    # —— Consulta por mês ——
+    ws["A24"] = "CONSULTA POR MÊS"
+    ws["A24"].font = Font(bold=True, size=12, color="FFFFFF")
+    ws["A24"].fill = PatternFill("solid", fgColor="3B4F7A")
+    ws.merge_cells("A24:D24")
+
+    ws["A25"] = "Escolha o mês"
+    ws["A25"].font = Font(bold=True, size=9, color="5D6D7E")
+    ws["B25"] = date(2026, 2, 1)
+    ws["B25"].number_format = "MMM/YYYY"
+    ws["B25"].fill = QUERY_FILL
+    ws["B25"].border = BORDER
+    ws["C25"] = "Qualquer dia do mês serve"
+    ws["C25"].font = Font(italic=True, size=9, color="7F8C8D")
+
+    ws["F24"] = "Início consulta"
+    ws["G24"] = "=DATE(YEAR(B25),MONTH(B25),1)"
+    ws["F25"] = "Fim consulta"
+    ws["G25"] = "=EOMONTH(B25,0)"
+    for addr in ("F24", "F25", "G24", "G25"):
+        ws[addr].font = Font(color="CCCCCC", size=8)
+    ws["G24"].number_format = DATE_FMT
+    ws["G25"].number_format = DATE_FMT
+
+    _kpi_block(ws, 26, 1, "Investido na consulta", month_inv("$G$24", "$G$25"), "Entradas no mês escolhido", QUERY_FILL)
+    _kpi_block(ws, 26, 3, "Lucro na consulta", month_profit("$G$24", "$G$25"), "Vendas no mês escolhido", GREEN_PASTEL)
+    _kpi_block(ws, 30, 1, "Vendas na consulta", month_sales("$G$24", "$G$25"), "Total vendido no mês escolhido", BLUE_PASTEL)
+
+    # Params + legend
+    ws["A34"] = "Parâmetros (Inventário)"
+    ws["A34"].font = Font(bold=True, size=11, color="0F2C4C")
+    ws["A35"] = "Taxa plataforma"
+    ws["B35"] = "=Inventário!B1"
+    ws["B35"].number_format = PCT
+    ws["A36"] = "Lucro 0% / 15% / 30%"
+    ws["B36"] = "=Inventário!D2"
+    ws["C36"] = "=Inventário!D1"
+    ws["D36"] = "=Inventário!B2"
+    for addr in ("B36", "C36", "D36"):
+        ws[addr].number_format = PCT
+        ws[addr].border = BORDER
+    ws["B36"].fill = YELLOW_PASTEL
+    ws["C36"].fill = BLUE_PASTEL
+    ws["D36"].fill = GREEN_PASTEL
+
+    ws["A38"] = "Legenda do lucro bruto (Inventário)"
+    ws["A38"].font = Font(bold=True, size=11, color="0F2C4C")
+    legend = [
+        (39, "≤ 0% (empata ou perde)", YELLOW_PASTEL),
+        (40, "15% até < 30%", BLUE_PASTEL),
+        (41, "30%", GREEN_PASTEL),
+        (42, "> 30%", PURPLE_PASTEL),
     ]
+    for row, label, fill in legend:
+        ws.cell(row, 1, label).fill = fill
+        ws.cell(row, 1).border = BORDER
 
-    for row, title, subtitle, formula, fill in metrics:
-        ws.cell(row, 1, title).font = Font(bold=True, size=12, color="1F4E79")
-        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=3)
-        ws.cell(row + 1, 1, formula)
-        ws.cell(row + 1, 1).number_format = CURRENCY
-        ws.cell(row + 1, 1).font = Font(bold=True, size=20, color="1A1A1A")
-        ws.cell(row + 1, 1).fill = fill
-        ws.cell(row + 1, 1).border = BORDER
-        ws.merge_cells(start_row=row + 1, start_column=1, end_row=row + 1, end_column=3)
-        ws.cell(row + 2, 1, subtitle).font = Font(italic=True, color="666666", size=10)
-        ws.merge_cells(start_row=row + 2, start_column=1, end_row=row + 2, end_column=3)
+    ws["A44"] = "Dica: o mês atual atualiza sozinho. Use a consulta para comparar outro período sem perder o recorte de agora."
+    ws["A44"].font = Font(italic=True, size=9, color="7F8C8D")
+    ws.merge_cells("A44:D44")
 
-    # Extra KPIs
-    ws["A21"] = "Resumo extra"
-    ws["A21"].font = Font(bold=True, size=12, color="1F4E79")
-
-    extras = [
-        (22, "Lucro bruto total (todas as vendas)", lucro_total),
-        (23, "Vendas no mês (R$)", vendas_mes),
-        (24, "Capital ainda em estoque", capital_estoque),
-    ]
-    for row, label, formula in extras:
-        ws.cell(row, 1, label).font = Font(bold=True)
-        ws.cell(row, 2, formula).number_format = CURRENCY
-        ws.cell(row, 2).border = BORDER
-        ws.cell(row, 2).fill = CARD_FILL
-
-    ws["A26"] = "Parâmetros (editáveis na aba Inventário)"
-    ws["A26"].font = Font(bold=True, size=12, color="1F4E79")
-    ws["A27"] = "Taxa da plataforma"
-    ws["B27"] = "=Inventário!B1"
-    ws["B27"].number_format = PCT
-    ws["A28"] = "Lucro desejado sobre o custo"
-    ws["B28"] = "=Inventário!B2"
-    ws["B28"].number_format = PCT
-
-    ws["A30"] = "Como ler o dashboard"
-    ws["A30"].font = Font(bold=True, size=12)
-    tips = [
-        "1. Em B3, escolha o mês (qualquer data daquele mês).",
-        "2. Investimento total = soma de todos os custos já registrados.",
-        "3. Investido no mês = custos das peças com Data de entrada naquele mês.",
-        "4. Lucro no mês = (valor de venda − compra − restauração) das peças vendidas no mês.",
-        "5. Investimento disponível = o que voltou de custo nas vendas (venda − lucro), para girar de novo.",
-        "6. Cadastre e edite peças na aba Inventário.",
-    ]
-    for i, tip in enumerate(tips):
-        ws.cell(31 + i, 1, tip).font = Font(size=10, color="444444")
-
-    ws.column_dimensions["A"].width = 42
-    ws.column_dimensions["B"].width = 16
-    ws.column_dimensions["C"].width = 36
-    ws.column_dimensions["D"].width = 14
+    ws.column_dimensions["A"].width = 28
+    ws.column_dimensions["B"].width = 18
+    ws.column_dimensions["C"].width = 28
+    ws.column_dimensions["D"].width = 18
+    ws.column_dimensions["E"].width = 3
+    ws.column_dimensions["F"].width = 14
+    ws.column_dimensions["G"].width = 14
 
 
 def build_ajuda(wb: Workbook) -> None:
@@ -315,36 +471,32 @@ def build_ajuda(wb: Workbook) -> None:
     lines = [
         "Como usar",
         "",
-        "Dashboard (guia principal)",
-        "• Escolha o mês em B3 para filtrar investido/lucro do período.",
-        "• Os cartões atualizam com base na aba Inventário.",
+        "Dashboard",
+        "• Visão geral: totais de investimento, capital disponível, estoque e lucro.",
+        "• Mês atual: calcula sozinho com a data de hoje (TODAY).",
+        "• Consulta por mês: escolha qualquer data em B25 para ver outro período.",
         "",
-        "Inventário",
-        "• Data de entrada: quando a peça chegou / foi recebida.",
-        "• Autenticidade: Original ou Réplica (lista suspensa).",
-        "• Valor de mercado: referência do que a peça costuma valer.",
-        "• Custo de compra + Custo de restauração: seu desembolso.",
-        "• Valor sugerido: calculado com taxa da plataforma (B1) e lucro desejado (B2).",
-        "• Valor de venda e Data da venda: preencha quando vender.",
-        "• Lucro bruto real: venda − (compra + restauração).",
+        "Inventário — preços coloridos",
+        "• Amarelo — Preço mín. (0% lucro): cobre custos + taxa, sem lucro.",
+        "• Azul — Preço com 15% de lucro.",
+        "• Verde — Valor sugerido com 30% de lucro.",
+        "• Lucro bruto real: vende − (compra + restauração).",
+        "  Cor do lucro: amarelo ≤0%, azul 15–30%, verde =30%, roxo >30%.",
         "",
-        "Fórmula do valor sugerido (igual à versão anterior):",
-        "  (compra + restauração) × (1 + taxa + lucro)",
-        "Ex.: custos R$ 57, taxa 10%, lucro 30% → sugerido R$ 74,10",
+        "Fórmula: (compra + restauração) × (1 + taxa + lucro%)",
+        "Taxa padrão 10% (célula B1 do Inventário).",
     ]
     for i, line in enumerate(lines, start=1):
         cell = ws.cell(i, 1, line)
         if i == 1:
             cell.font = Font(bold=True, size=14)
-        elif line and not line.startswith("•") and not line.startswith(" ") and not line.startswith("Ex") and not line.startswith("("):
-            if line.endswith(")") or line in ("Dashboard (guia principal)", "Inventário"):
-                cell.font = Font(bold=True, size=12)
-    ws.column_dimensions["A"].width = 90
+        elif line in ("Dashboard", "Inventário — preços coloridos"):
+            cell.font = Font(bold=True, size=12)
+    ws.column_dimensions["A"].width = 95
 
 
 def main() -> None:
     wb = Workbook()
-    # remove default
     default = wb.active
     wb.remove(default)
 
@@ -352,15 +504,7 @@ def main() -> None:
     build_dashboard(wb)
     build_ajuda(wb)
 
-    # Order: Dashboard, Inventário, Como usar
-    wb.move_sheet("Dashboard", offset=-wb.sheetnames.index("Dashboard"))
-    # Ensure Inventário is second
-    wb._sheets = [
-        wb["Dashboard"],
-        wb["Inventário"],
-        wb["Como usar"],
-    ]
-
+    wb._sheets = [wb["Dashboard"], wb["Inventário"], wb["Como usar"]]
     wb.save(OUT)
     print(f"Gerado: {OUT}")
 
