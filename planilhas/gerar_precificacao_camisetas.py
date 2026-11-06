@@ -25,6 +25,7 @@ YELLOW_PASTEL = PatternFill("solid", fgColor="FFF3B0")  # 0%
 BLUE_PASTEL = PatternFill("solid", fgColor="D6EAF8")  # 15%
 GREEN_PASTEL = PatternFill("solid", fgColor="D5F5E3")  # 30%
 PURPLE_PASTEL = PatternFill("solid", fgColor="E8DAEF")  # >30%
+RED_LOSS = PatternFill("solid", fgColor="F5B7B1")  # <0%
 WARN_FILL = PatternFill("solid", fgColor="FCF3CF")
 THIN = Side(style="thin", color="D0D7E2")
 BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
@@ -168,7 +169,8 @@ def build_inventario(wb: Workbook) -> None:
     ws["A3"] = (
         "Amarelo = preço sem lucro (só cobre taxa + custos). "
         "Azul = 15% de lucro. Verde = 30% (sugerido). "
-        "Lucro bruto real = venda − (compra + restauração); a cor segue a margem atingida."
+        "Lucro bruto real = venda − (compra + restauração); "
+        "vermelho se margem <0%, amarelo =0%, azul ≥15%, verde ≥30%, roxo >30%."
     )
     ws.merge_cells("A3:N3")
     ws["A3"].font = Font(italic=True, color="555555", size=10)
@@ -240,14 +242,14 @@ def build_inventario(wb: Workbook) -> None:
         ws.cell(r, COL["sugerido_30"]).fill = GREEN_PASTEL
 
     # Conditional formatting on Lucro (col N) by margin = lucro/(G+H)
-    # margin <= 0 → yellow
+    # margin < 0 → red
+    # margin = 0 → yellow
     # 0.15 <= margin < 0.30 → blue
-    # 0.30 <= margin <= 0.30... use >=0.30 and <=0.30 for green approximately: >=0.30 and not >0.30
-    # > 0.30 → purple
+    # margin >= 0.30 (and not >0.30) → green
+    # margin > 0.30 → purple
     lucro_range = f"N{FIRST_DATA}:N{LAST_DATA}"
 
-    # Order matters: more specific first. openpyxl applies in order; last matching can win depending on stopIfTrue
-    # Use stopIfTrue=True on each
+    # Order matters: more specific first; stopIfTrue=True on each
     ws.conditional_formatting.add(
         lucro_range,
         FormulaRule(
@@ -275,7 +277,15 @@ def build_inventario(wb: Workbook) -> None:
     ws.conditional_formatting.add(
         lucro_range,
         FormulaRule(
-            formula=[f'AND(N{FIRST_DATA}<>"",(G{FIRST_DATA}+H{FIRST_DATA})>0,N{FIRST_DATA}/(G{FIRST_DATA}+H{FIRST_DATA})<=0)'],
+            formula=[f'AND(N{FIRST_DATA}<>"",(G{FIRST_DATA}+H{FIRST_DATA})>0,N{FIRST_DATA}/(G{FIRST_DATA}+H{FIRST_DATA})<0)'],
+            fill=RED_LOSS,
+            stopIfTrue=True,
+        ),
+    )
+    ws.conditional_formatting.add(
+        lucro_range,
+        FormulaRule(
+            formula=[f'AND(N{FIRST_DATA}<>"",(G{FIRST_DATA}+H{FIRST_DATA})>0,N{FIRST_DATA}/(G{FIRST_DATA}+H{FIRST_DATA})=0)'],
             fill=YELLOW_PASTEL,
             stopIfTrue=True,
         ),
@@ -309,7 +319,7 @@ def build_inventario(wb: Workbook) -> None:
         ws.column_dimensions[col].width = width
 
     # Legend
-    ws["A4"] = "Legenda preços:"
+    ws["A4"] = "Legenda preços / lucro:"
     ws["A4"].font = Font(bold=True, size=9)
     ws["B4"] = "0% — amarelo"
     ws["B4"].fill = YELLOW_PASTEL
@@ -319,6 +329,8 @@ def build_inventario(wb: Workbook) -> None:
     ws["D4"].fill = GREEN_PASTEL
     ws["E4"] = "lucro >30% — roxo"
     ws["E4"].fill = PURPLE_PASTEL
+    ws["F4"] = "lucro <0% — vermelho"
+    ws["F4"].fill = RED_LOSS
 
     ws.freeze_panes = "A6"
     ws.auto_filter.ref = f"A5:{get_column_letter(NCOLS)}{LAST_DATA}"
@@ -444,18 +456,19 @@ def build_dashboard(wb: Workbook) -> None:
     ws["A38"] = "Legenda do lucro bruto (Inventário)"
     ws["A38"].font = Font(bold=True, size=11, color="0F2C4C")
     legend = [
-        (39, "≤ 0% (empata ou perde)", YELLOW_PASTEL),
-        (40, "15% até < 30%", BLUE_PASTEL),
-        (41, "30%", GREEN_PASTEL),
-        (42, "> 30%", PURPLE_PASTEL),
+        (39, "< 0% (prejuízo)", RED_LOSS),
+        (40, "0% (empate)", YELLOW_PASTEL),
+        (41, "15% até < 30%", BLUE_PASTEL),
+        (42, "30%", GREEN_PASTEL),
+        (43, "> 30%", PURPLE_PASTEL),
     ]
     for row, label, fill in legend:
         ws.cell(row, 1, label).fill = fill
         ws.cell(row, 1).border = BORDER
 
-    ws["A44"] = "Dica: o mês atual atualiza sozinho. Use a consulta para comparar outro período sem perder o recorte de agora."
-    ws["A44"].font = Font(italic=True, size=9, color="7F8C8D")
-    ws.merge_cells("A44:D44")
+    ws["A45"] = "Dica: o mês atual atualiza sozinho. Use a consulta para comparar outro período sem perder o recorte de agora."
+    ws["A45"].font = Font(italic=True, size=9, color="7F8C8D")
+    ws.merge_cells("A45:D45")
 
     ws.column_dimensions["A"].width = 28
     ws.column_dimensions["B"].width = 18
@@ -480,8 +493,8 @@ def build_ajuda(wb: Workbook) -> None:
         "• Amarelo — Preço mín. (0% lucro): cobre custos + taxa, sem lucro.",
         "• Azul — Preço com 15% de lucro.",
         "• Verde — Valor sugerido com 30% de lucro.",
-        "• Lucro bruto real: vende − (compra + restauração).",
-        "  Cor do lucro: amarelo ≤0%, azul 15–30%, verde =30%, roxo >30%.",
+        "• Lucro bruto real: venda − (compra + restauração).",
+        "  Cor do lucro: vermelho <0%, amarelo =0%, azul 15–30%, verde =30%, roxo >30%.",
         "",
         "Fórmula: (compra + restauração) × (1 + taxa + lucro%)",
         "Taxa padrão 10% (célula B1 do Inventário).",
