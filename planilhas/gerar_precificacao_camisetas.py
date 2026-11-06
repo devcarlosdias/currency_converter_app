@@ -185,28 +185,66 @@ def build_inventario(wb: Workbook) -> None:
     ws.cell(header_row, COL["sugerido_30"]).fill = PatternFill("solid", fgColor="1E8449")
     ws.row_dimensions[header_row].height = 36
 
-    examples = [
-        (date(2026, 1, 10), "Brasil 2022 — Home", "G", "Largura 54 cm", "Original", 350.0, 180.0, 25.0, 280.0, date(2026, 2, 5)),
-        (date(2026, 2, 1), "Flamengo retrô", "M", "Largura 50 cm", "Réplica", 120.0, 45.0, 10.0, None, None),
-        (date(2026, 2, 15), "Real Madrid away", "GG", "Largura 58 cm", "Original", 400.0, 220.0, 30.0, None, None),
-        (date(2026, 3, 1), "Holanda vintage", "G", "Largura 55 cm", "Original", 280.0, 90.0, 15.0, 150.0, date.today()),
+    # Itens reais: (modelo, tamanho, autenticidade, compra, restauração, venda)
+    # Campos não informados (entrada, medida, mercado, data venda) ficam em branco.
+    items = [
+        ("Bayern", "M", "Original", 99.38, 0.0, 139.13),
+        ("Boca Juniors", "G", "Thai", 60.00, 0.0, 84.00),
+        ("Borussia", "G", "Thai", 41.42, 0.0, 57.99),
+        ("Barcelona", "M", "Thai", 31.00, 0.0, 43.40),
+        ("São Paulo 2018", "G", "Original", 20.82, 0.0, 29.15),
+        ("Palmeiras", "GG", "Thai", 22.00, 0.0, 30.80),
+        ("Brasil Basquete", "G", "Thai - Indefinido", 20.00, 0.0, 28.00),
+        ("Brasil 2018", "M", "Original", 20.00, 0.0, 28.00),
+        ("Corinthians 2013 - Chicão", "M", "Original", 226.95, 0.0, 317.73),
+        ("Ribeirão Preto", "M", "Thai - Indefinido", 10.77, 0.0, 15.08),
+        ("Corinthians Retro - 1980", "XGG", "Original - Retrô", 107.56, 0.0, 150.58),
+        ("Italia", "G", "Thai - Indefinido", 31.20, 0.0, 43.68),
+        ("Corinthians - Batavo Cauã", "G", "Original", 51.38, 0.0, 71.93),
+        ("Japão", "G", "Thai", 49.06, 0.0, 68.68),
+        ("Corinthians 2013", "P", "Original", 70.38, 0.0, 98.53),
+        ("Corinthains - Batavo", "M", "Thai - Indefinido", 33.37, 0.0, 46.72),
+        ("Porto 2002", "M", "Original", 51.38, 0.0, 71.93),
+        ("Blusa Milan", "P", "Original", 40.93, 0.0, 57.30),
+        ("Conjunto Marchester United", "XGG", "Original", 250.00, 0.0, 350.00),
+        ("Inter", "XGG", "Original", 55.74, 0.0, 78.04),
+        ("Flamengo", "XGG", "Original", 55.74, 0.0, 78.04),
+        ("Liverpool", "P", "Original", 40.00, 0.0, 56.00),
+        ("Corinthians", "G", "Original", 61.00, 0.0, 85.40),
+        ("Calça Milan", "P", "Original", 50.93, 0.0, 71.30),
+        ("Coritiba", "M", "Original", 40.00, 0.0, 56.00),
+        ("Corinthains", None, "Original", 70.58, 0.0, 98.81),
+        ("Corinthians", None, "Original", 70.58, 0.0, 98.81),
+        ("Corinthians", None, "Original", 70.58, 0.0, 98.81),
+        ("Inter cinza", None, "Original", 51.45, 0.0, 72.03),
+        ("Corinthians Amarela", None, "Original", 51.00, 0.0, 71.40),
+        ("Espanha", None, "Original", 81.87, 0.0, 114.62),
+        ("Argentina", None, "Original", 81.87, 0.0, 114.62),
+        ("Palmeiras Verde limão", None, "Original", 67.56, 0.0, 94.58),
+        ("Palmeiras", None, "Thai", 40.00, 0.0, 56.00),
+        ("Gremio", "G", "Original", 95.81, 0.0, 134.13),
+        ("Fluminense", "M", "Original", 95.81, 0.0, 134.13),
+        ("Corinthians Preto 2013", "P", "Original", 64.81, 0.0, 90.73),
+        ("Palmeiras Listrada", "P", "Original", 38.38, 0.0, 53.73),
+        ("Santos 2002", None, "Original", 98.33, 0.0, 137.66),
+        ("Manchester United", None, "Original", 98.33, 0.0, 137.66),
+        ("Flamengo 2013", "P", "Original", 66.22, 0.0, 92.71),
+        ("Corinthians Roxa", "G", "Original", 89.00, 0.0, 124.60),
+        ("Nigéria", "G", "Original", 250.00, 0.0, 350.00),
+        ("Holanda", "M", "Original", 250.00, 0.0, 350.00),
+        ("Paris Saint German 2018", "G", "Original", 105.00, 0.0, 147.00),
     ]
 
-    for i, row_data in enumerate(examples):
+    for i, row_data in enumerate(items):
         r = FIRST_DATA + i
-        entrada, modelo, tamanho, medida, auth, mercado, compra, restauro, venda, data_venda = row_data
-        ws.cell(r, COL["entrada"], entrada)
+        modelo, tamanho, auth, compra, restauro, venda = row_data
         ws.cell(r, COL["modelo"], modelo)
-        ws.cell(r, COL["tamanho"], tamanho)
-        ws.cell(r, COL["medida"], medida)
+        if tamanho:
+            ws.cell(r, COL["tamanho"], tamanho)
         ws.cell(r, COL["autenticidade"], auth)
-        ws.cell(r, COL["mercado"], mercado)
         ws.cell(r, COL["compra"], compra)
         ws.cell(r, COL["restauracao"], restauro)
-        if venda is not None:
-            ws.cell(r, COL["venda"], venda)
-        if data_venda is not None:
-            ws.cell(r, COL["data_venda"], data_venda)
+        ws.cell(r, COL["venda"], venda)
 
     for r in range(FIRST_DATA, LAST_DATA + 1):
         # 0%: (custo)*(1+taxa+0)
@@ -291,7 +329,11 @@ def build_inventario(wb: Workbook) -> None:
         ),
     )
 
-    dv_auth = DataValidation(type="list", formula1='"Original,Réplica"', allow_blank=True)
+    dv_auth = DataValidation(
+        type="list",
+        formula1='"Original,Original - Retrô,Thai,Thai - Indefinido,Réplica"',
+        allow_blank=True,
+    )
     ws.add_data_validation(dv_auth)
     dv_auth.add(f"E{FIRST_DATA}:E{LAST_DATA}")
 
@@ -301,7 +343,7 @@ def build_inventario(wb: Workbook) -> None:
 
     widths = {
         "A": 14,
-        "B": 26,
+        "B": 32,
         "C": 9,
         "D": 14,
         "E": 13,
