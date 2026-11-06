@@ -21,9 +21,9 @@ CARD_EDGE = PatternFill("solid", fgColor="E3EAF3")
 NOW_FILL = PatternFill("solid", fgColor="E8F6F1")
 QUERY_FILL = PatternFill("solid", fgColor="EEF2FF")
 TOTAL_FILL = PatternFill("solid", fgColor="EAF2FB")
-YELLOW_PASTEL = PatternFill("solid", fgColor="FFF3B0")  # 0%
-BLUE_PASTEL = PatternFill("solid", fgColor="D6EAF8")  # 15%
-GREEN_PASTEL = PatternFill("solid", fgColor="D5F5E3")  # 30%
+YELLOW_PASTEL = PatternFill("solid", fgColor="FFF3B0")  # 0%–4,99%
+BLUE_PASTEL = PatternFill("solid", fgColor="D6EAF8")  # 5%–15%
+GREEN_PASTEL = PatternFill("solid", fgColor="D5F5E3")  # 15,01%–30%
 PURPLE_PASTEL = PatternFill("solid", fgColor="E8DAEF")  # >30%
 RED_LOSS = PatternFill("solid", fgColor="F5B7B1")  # <0%
 WARN_FILL = PatternFill("solid", fgColor="FCF3CF")
@@ -37,7 +37,7 @@ DATE_FMT = "DD/MM/YYYY"
 # A entrada, B modelo, C tamanho, D medida, E autenticidade,
 # F mercado, G compra, H restauração,
 # I preço 0%, J preço 15%, K sugerido 30%,
-# L venda, M data venda, N lucro
+# L venda, M data venda, N taxa cobrada, O lucro após taxa
 COL = {
     "entrada": 1,
     "modelo": 2,
@@ -52,7 +52,8 @@ COL = {
     "sugerido_30": 11,
     "venda": 12,
     "data_venda": 13,
-    "lucro": 14,
+    "taxa": 14,
+    "lucro": 15,
 }
 
 HEADERS = [
@@ -69,7 +70,8 @@ HEADERS = [
     "Valor sugerido (30%)",
     "Valor de venda",
     "Data da venda",
-    "Lucro bruto real",
+    "Taxa cobrada (R$)",
+    "Lucro após taxa",
 ]
 
 FIRST_DATA = 6
@@ -101,12 +103,12 @@ def month_inv(start_cell: str, end_cell: str) -> str:
 
 
 def month_profit(start_cell: str, end_cell: str) -> str:
+    # Lucro já abate a taxa (coluna O); filtra por data da venda (M)
     return (
         f"=SUMPRODUCT((Inventário!M{FIRST_DATA}:M{LAST_DATA}>={start_cell})"
         f"*(Inventário!M{FIRST_DATA}:M{LAST_DATA}<={end_cell})"
         f'*(Inventário!L{FIRST_DATA}:L{LAST_DATA}<>"")'
-        f"*(Inventário!L{FIRST_DATA}:L{LAST_DATA}"
-        f"-(Inventário!G{FIRST_DATA}:G{LAST_DATA}+Inventário!H{FIRST_DATA}:H{LAST_DATA})))"
+        f"*(Inventário!O{FIRST_DATA}:O{LAST_DATA}))"
     )
 
 
@@ -120,7 +122,7 @@ def month_sales(start_cell: str, end_cell: str) -> str:
 
 
 def capital_disponivel() -> str:
-    # venda - lucro = custos recuperados
+    # custos recuperados nas peças vendidas
     return (
         f'=SUMPRODUCT((Inventário!L{FIRST_DATA}:L{LAST_DATA}<>"")'
         f"*(Inventário!G{FIRST_DATA}:G{LAST_DATA}+Inventário!H{FIRST_DATA}:H{LAST_DATA}))"
@@ -136,10 +138,17 @@ def capital_estoque() -> str:
 
 
 def lucro_total() -> str:
+    # Soma do lucro após taxa (coluna O)
     return (
         f'=SUMPRODUCT((Inventário!L{FIRST_DATA}:L{LAST_DATA}<>"")'
-        f"*(Inventário!L{FIRST_DATA}:L{LAST_DATA}"
-        f"-(Inventário!G{FIRST_DATA}:G{LAST_DATA}+Inventário!H{FIRST_DATA}:H{LAST_DATA})))"
+        f"*(Inventário!O{FIRST_DATA}:O{LAST_DATA}))"
+    )
+
+
+def taxas_total() -> str:
+    return (
+        f'=SUMPRODUCT((Inventário!L{FIRST_DATA}:L{LAST_DATA}<>"")'
+        f"*(Inventário!N{FIRST_DATA}:N{LAST_DATA}))"
     )
 
 
@@ -167,12 +176,12 @@ def build_inventario(wb: Workbook) -> None:
         ws[addr].border = BORDER
 
     ws["A3"] = (
-        "Amarelo = preço sem lucro (só cobre taxa + custos). "
-        "Azul = 15% de lucro. Verde = 30% (sugerido). "
-        "Lucro bruto real = venda − (compra + restauração); "
-        "vermelho se margem <0%, amarelo =0%, azul ≥15%, verde ≥30%, roxo >30%."
+        "Taxa cobrada = venda × taxa da plataforma. "
+        "Lucro após taxa = venda − taxa − (compra + restauração). "
+        "Cores do lucro: vermelho <0%; amarelo 0–4,99%; azul 5–15%; "
+        "verde 15,01–30%; roxo >30%."
     )
-    ws.merge_cells("A3:N3")
+    ws.merge_cells("A3:O3")
     ws["A3"].font = Font(italic=True, color="555555", size=10)
 
     header_row = 5
@@ -183,6 +192,7 @@ def build_inventario(wb: Workbook) -> None:
     ws.cell(header_row, COL["preco_0"]).fill = PatternFill("solid", fgColor="C9A227")
     ws.cell(header_row, COL["preco_15"]).fill = PatternFill("solid", fgColor="2E86AB")
     ws.cell(header_row, COL["sugerido_30"]).fill = PatternFill("solid", fgColor="1E8449")
+    ws.cell(header_row, COL["taxa"]).fill = PatternFill("solid", fgColor="922B21")
     ws.row_dimensions[header_row].height = 36
 
     # Itens reais: (modelo, tamanho, autenticidade, compra, restauração, venda)
@@ -253,8 +263,10 @@ def build_inventario(wb: Workbook) -> None:
         ws.cell(r, COL["preco_15"], f"=(G{r}+H{r})*(1+$B$1+$D$1)")
         # 30% sugerido
         ws.cell(r, COL["sugerido_30"], f"=(G{r}+H{r})*(1+$B$1+$B$2)")
-        # Lucro
-        ws.cell(r, COL["lucro"], f'=IF(L{r}="","",L{r}-(G{r}+H{r}))')
+        # Taxa cobrada pela plataforma nesta venda
+        ws.cell(r, COL["taxa"], f'=IF(L{r}="","",L{r}*$B$1)')
+        # Lucro após taxa = venda − taxa − custos
+        ws.cell(r, COL["lucro"], f'=IF(L{r}="","",L{r}-N{r}-(G{r}+H{r}))')
 
         for c in range(1, NCOLS + 1):
             ws.cell(r, c).border = BORDER
@@ -267,6 +279,7 @@ def build_inventario(wb: Workbook) -> None:
             COL["preco_15"],
             COL["sugerido_30"],
             COL["venda"],
+            COL["taxa"],
             COL["lucro"],
         ):
             ws.cell(r, c).number_format = CURRENCY
@@ -278,20 +291,23 @@ def build_inventario(wb: Workbook) -> None:
         ws.cell(r, COL["preco_0"]).fill = YELLOW_PASTEL
         ws.cell(r, COL["preco_15"]).fill = BLUE_PASTEL
         ws.cell(r, COL["sugerido_30"]).fill = GREEN_PASTEL
+        ws.cell(r, COL["taxa"]).fill = PatternFill("solid", fgColor="FADBD8")
 
-    # Conditional formatting on Lucro (col N) by margin = lucro/(G+H)
-    # margin < 0 → red
-    # margin = 0 → yellow
-    # 0.15 <= margin < 0.30 → blue
-    # margin >= 0.30 (and not >0.30) → green
-    # margin > 0.30 → purple
-    lucro_range = f"N{FIRST_DATA}:N{LAST_DATA}"
+    # Conditional formatting on Lucro (col O) by margin = lucro/(G+H)
+    # < 0 → vermelho
+    # 0 a 4,99% → amarelo
+    # 5% a 15% → azul
+    # 15,01% a 30% → verde
+    # > 30% → roxo
+    lucro_range = f"O{FIRST_DATA}:O{LAST_DATA}"
+    g = f"(G{FIRST_DATA}+H{FIRST_DATA})"
+    o = f"O{FIRST_DATA}"
+    margin = f"{o}/{g}"
 
-    # Order matters: more specific first; stopIfTrue=True on each
     ws.conditional_formatting.add(
         lucro_range,
         FormulaRule(
-            formula=[f'AND(N{FIRST_DATA}<>"",(G{FIRST_DATA}+H{FIRST_DATA})>0,N{FIRST_DATA}/(G{FIRST_DATA}+H{FIRST_DATA})>0.3)'],
+            formula=[f'AND({o}<>"",{g}>0,{margin}>0.3)'],
             fill=PURPLE_PASTEL,
             stopIfTrue=True,
         ),
@@ -299,7 +315,7 @@ def build_inventario(wb: Workbook) -> None:
     ws.conditional_formatting.add(
         lucro_range,
         FormulaRule(
-            formula=[f'AND(N{FIRST_DATA}<>"",(G{FIRST_DATA}+H{FIRST_DATA})>0,N{FIRST_DATA}/(G{FIRST_DATA}+H{FIRST_DATA})>=0.3)'],
+            formula=[f'AND({o}<>"",{g}>0,{margin}>0.15)'],
             fill=GREEN_PASTEL,
             stopIfTrue=True,
         ),
@@ -307,7 +323,7 @@ def build_inventario(wb: Workbook) -> None:
     ws.conditional_formatting.add(
         lucro_range,
         FormulaRule(
-            formula=[f'AND(N{FIRST_DATA}<>"",(G{FIRST_DATA}+H{FIRST_DATA})>0,N{FIRST_DATA}/(G{FIRST_DATA}+H{FIRST_DATA})>=0.15)'],
+            formula=[f'AND({o}<>"",{g}>0,{margin}>=0.05)'],
             fill=BLUE_PASTEL,
             stopIfTrue=True,
         ),
@@ -315,7 +331,7 @@ def build_inventario(wb: Workbook) -> None:
     ws.conditional_formatting.add(
         lucro_range,
         FormulaRule(
-            formula=[f'AND(N{FIRST_DATA}<>"",(G{FIRST_DATA}+H{FIRST_DATA})>0,N{FIRST_DATA}/(G{FIRST_DATA}+H{FIRST_DATA})<0)'],
+            formula=[f'AND({o}<>"",{g}>0,{margin}<0)'],
             fill=RED_LOSS,
             stopIfTrue=True,
         ),
@@ -323,7 +339,7 @@ def build_inventario(wb: Workbook) -> None:
     ws.conditional_formatting.add(
         lucro_range,
         FormulaRule(
-            formula=[f'AND(N{FIRST_DATA}<>"",(G{FIRST_DATA}+H{FIRST_DATA})>0,N{FIRST_DATA}/(G{FIRST_DATA}+H{FIRST_DATA})=0)'],
+            formula=[f'AND({o}<>"",{g}>0,{margin}>=0)'],
             fill=YELLOW_PASTEL,
             stopIfTrue=True,
         ),
@@ -346,7 +362,7 @@ def build_inventario(wb: Workbook) -> None:
         "B": 32,
         "C": 9,
         "D": 14,
-        "E": 13,
+        "E": 16,
         "F": 15,
         "G": 14,
         "H": 16,
@@ -356,23 +372,24 @@ def build_inventario(wb: Workbook) -> None:
         "L": 14,
         "M": 13,
         "N": 15,
+        "O": 15,
     }
     for col, width in widths.items():
         ws.column_dimensions[col].width = width
 
-    # Legend
-    ws["A4"] = "Legenda preços / lucro:"
+    # Legend — faixas do lucro após taxa
+    ws["A4"] = "Legenda lucro:"
     ws["A4"].font = Font(bold=True, size=9)
-    ws["B4"] = "0% — amarelo"
-    ws["B4"].fill = YELLOW_PASTEL
-    ws["C4"] = "15% — azul"
-    ws["C4"].fill = BLUE_PASTEL
-    ws["D4"] = "30% — verde"
-    ws["D4"].fill = GREEN_PASTEL
-    ws["E4"] = "lucro >30% — roxo"
-    ws["E4"].fill = PURPLE_PASTEL
-    ws["F4"] = "lucro <0% — vermelho"
-    ws["F4"].fill = RED_LOSS
+    ws["B4"] = "<0% vermelho"
+    ws["B4"].fill = RED_LOSS
+    ws["C4"] = "0–4,99% amarelo"
+    ws["C4"].fill = YELLOW_PASTEL
+    ws["D4"] = "5–15% azul"
+    ws["D4"].fill = BLUE_PASTEL
+    ws["E4"] = "15,01–30% verde"
+    ws["E4"].fill = GREEN_PASTEL
+    ws["F4"] = ">30% roxo"
+    ws["F4"].fill = PURPLE_PASTEL
 
     ws.freeze_panes = "A6"
     ws.auto_filter.ref = f"A5:{get_column_letter(NCOLS)}{LAST_DATA}"
@@ -419,9 +436,10 @@ def build_dashboard(wb: Workbook) -> None:
     ws.merge_cells("A4:D4")
 
     _kpi_block(ws, 5, 1, "Investimento total", inv_sum_costs(), "Compra + restauração de todas as peças", TOTAL_FILL)
-    _kpi_block(ws, 5, 3, "Investimento disponível", capital_disponivel(), "Custos recuperados nas vendas (venda − lucro)", WARN_FILL)
+    _kpi_block(ws, 5, 3, "Investimento disponível", capital_disponivel(), "Custos recuperados nas vendas", WARN_FILL)
     _kpi_block(ws, 9, 1, "Capital em estoque", capital_estoque(), "Custos de peças ainda não vendidas", CARD_BG)
-    _kpi_block(ws, 9, 3, "Lucro bruto total", lucro_total(), "Soma do lucro de todas as vendas", GREEN_PASTEL)
+    _kpi_block(ws, 9, 3, "Lucro total (após taxa)", lucro_total(), "Venda − taxa da plataforma − custos", GREEN_PASTEL)
+    _kpi_block(ws, 9, 5, "Taxas pagas", taxas_total(), "Soma da taxa cobrada em cada venda", PatternFill("solid", fgColor="FADBD8"))
 
     # —— Mês atual (automático) ——
     ws["A14"] = "MÊS ATUAL (automático)"
@@ -447,7 +465,7 @@ def build_dashboard(wb: Workbook) -> None:
     ws["G15"].number_format = DATE_FMT
 
     _kpi_block(ws, 16, 1, "Investido neste mês", month_inv("$G$14", "$G$15"), "Peças com entrada no mês atual", NOW_FILL)
-    _kpi_block(ws, 16, 3, "Lucro neste mês", month_profit("$G$14", "$G$15"), "Vendas concluídas no mês atual", GREEN_PASTEL)
+    _kpi_block(ws, 16, 3, "Lucro neste mês", month_profit("$G$14", "$G$15"), "Lucro após taxa nas vendas do mês", GREEN_PASTEL)
     _kpi_block(ws, 20, 1, "Vendas neste mês", month_sales("$G$14", "$G$15"), "Soma dos valores de venda do mês", BLUE_PASTEL)
 
     # —— Consulta por mês ——
@@ -475,7 +493,7 @@ def build_dashboard(wb: Workbook) -> None:
     ws["G25"].number_format = DATE_FMT
 
     _kpi_block(ws, 26, 1, "Investido na consulta", month_inv("$G$24", "$G$25"), "Entradas no mês escolhido", QUERY_FILL)
-    _kpi_block(ws, 26, 3, "Lucro na consulta", month_profit("$G$24", "$G$25"), "Vendas no mês escolhido", GREEN_PASTEL)
+    _kpi_block(ws, 26, 3, "Lucro na consulta", month_profit("$G$24", "$G$25"), "Lucro após taxa no mês escolhido", GREEN_PASTEL)
     _kpi_block(ws, 30, 1, "Vendas na consulta", month_sales("$G$24", "$G$25"), "Total vendido no mês escolhido", BLUE_PASTEL)
 
     # Params + legend
@@ -495,13 +513,13 @@ def build_dashboard(wb: Workbook) -> None:
     ws["C36"].fill = BLUE_PASTEL
     ws["D36"].fill = GREEN_PASTEL
 
-    ws["A38"] = "Legenda do lucro bruto (Inventário)"
+    ws["A38"] = "Legenda do lucro após taxa (Inventário)"
     ws["A38"].font = Font(bold=True, size=11, color="0F2C4C")
     legend = [
         (39, "< 0% (prejuízo)", RED_LOSS),
-        (40, "0% (empate)", YELLOW_PASTEL),
-        (41, "15% até < 30%", BLUE_PASTEL),
-        (42, "30%", GREEN_PASTEL),
+        (40, "0% a 4,99%", YELLOW_PASTEL),
+        (41, "5% a 15%", BLUE_PASTEL),
+        (42, "15,01% a 30%", GREEN_PASTEL),
         (43, "> 30%", PURPLE_PASTEL),
     ]
     for row, label, fill in legend:
@@ -516,7 +534,7 @@ def build_dashboard(wb: Workbook) -> None:
     ws.column_dimensions["B"].width = 18
     ws.column_dimensions["C"].width = 28
     ws.column_dimensions["D"].width = 18
-    ws.column_dimensions["E"].width = 3
+    ws.column_dimensions["E"].width = 16
     ws.column_dimensions["F"].width = 14
     ws.column_dimensions["G"].width = 14
 
@@ -527,25 +545,24 @@ def build_ajuda(wb: Workbook) -> None:
         "Como usar",
         "",
         "Dashboard",
-        "• Visão geral: totais de investimento, capital disponível, estoque e lucro.",
+        "• Visão geral: totais de investimento, capital disponível, estoque, lucro após taxa e taxas pagas.",
         "• Mês atual: calcula sozinho com a data de hoje (TODAY).",
         "• Consulta por mês: escolha qualquer data em B25 para ver outro período.",
         "",
-        "Inventário — preços coloridos",
-        "• Amarelo — Preço mín. (0% lucro): cobre custos + taxa, sem lucro.",
-        "• Azul — Preço com 15% de lucro.",
-        "• Verde — Valor sugerido com 30% de lucro.",
-        "• Lucro bruto real: venda − (compra + restauração).",
-        "  Cor do lucro: vermelho <0%, amarelo =0%, azul 15–30%, verde =30%, roxo >30%.",
+        "Inventário — preços e lucro",
+        "• Amarelo / Azul / Verde — preços sugeridos para 0%, 15% e 30%.",
+        "• Taxa cobrada (R$) = valor de venda × taxa da plataforma (B1).",
+        "• Lucro após taxa = venda − taxa cobrada − (compra + restauração).",
+        "  Cores: vermelho <0%; amarelo 0–4,99%; azul 5–15%; verde 15,01–30%; roxo >30%.",
         "",
-        "Fórmula: (compra + restauração) × (1 + taxa + lucro%)",
+        "Fórmula de preço sugerido: (compra + restauração) × (1 + taxa + lucro%)",
         "Taxa padrão 10% (célula B1 do Inventário).",
     ]
     for i, line in enumerate(lines, start=1):
         cell = ws.cell(i, 1, line)
         if i == 1:
             cell.font = Font(bold=True, size=14)
-        elif line in ("Dashboard", "Inventário — preços coloridos"):
+        elif line in ("Dashboard", "Inventário — preços e lucro"):
             cell.font = Font(bold=True, size=12)
     ws.column_dimensions["A"].width = 95
 
