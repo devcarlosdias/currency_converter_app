@@ -176,10 +176,10 @@ def build_inventario(wb: Workbook) -> None:
         ws[addr].border = BORDER
 
     ws["A3"] = (
-        "Taxa cobrada = venda × taxa da plataforma. "
-        "Lucro após taxa = venda − taxa − (compra + restauração). "
-        "Cores do lucro: vermelho <0%; amarelo 0–4,99%; azul 5–15%; "
-        "verde 15,01–30%; roxo >30%."
+        "Preços sugeridos já embutem a taxa: custo × (1 + margem) ÷ (1 − taxa). "
+        "Assim, vender no preço 0% zera o lucro após a taxa. "
+        "Taxa cobrada = venda × taxa. Lucro = venda − taxa − custos. "
+        "Cores: vermelho <0%; amarelo 0–4,99%; azul 5–15%; verde 15,01–30%; roxo >30%."
     )
     ws.merge_cells("A3:O3")
     ws["A3"].font = Font(italic=True, color="555555", size=10)
@@ -257,12 +257,14 @@ def build_inventario(wb: Workbook) -> None:
         ws.cell(r, COL["venda"], venda)
 
     for r in range(FIRST_DATA, LAST_DATA + 1):
-        # 0%: (custo)*(1+taxa+0)
-        ws.cell(r, COL["preco_0"], f"=(G{r}+H{r})*(1+$B$1+$D$2)")
-        # 15%
-        ws.cell(r, COL["preco_15"], f"=(G{r}+H{r})*(1+$B$1+$D$1)")
-        # 30% sugerido
-        ws.cell(r, COL["sugerido_30"], f"=(G{r}+H{r})*(1+$B$1+$B$2)")
+        # Preço para margem líquida alvo APÓS a taxa da plataforma:
+        # venda × (1 − taxa) = custo × (1 + margem)  ⇒  venda = custo × (1 + margem) / (1 − taxa)
+        # 0%: cobre custos + taxa, lucro líquido = 0
+        ws.cell(r, COL["preco_0"], f"=(G{r}+H{r})*(1+$D$2)/(1-$B$1)")
+        # 15% líquido após taxa
+        ws.cell(r, COL["preco_15"], f"=(G{r}+H{r})*(1+$D$1)/(1-$B$1)")
+        # 30% líquido após taxa (sugerido)
+        ws.cell(r, COL["sugerido_30"], f"=(G{r}+H{r})*(1+$B$2)/(1-$B$1)")
         # Taxa cobrada pela plataforma nesta venda
         ws.cell(r, COL["taxa"], f'=IF(L{r}="","",L{r}*$B$1)')
         # Lucro após taxa = venda − taxa − custos
@@ -550,13 +552,13 @@ def build_ajuda(wb: Workbook) -> None:
         "• Consulta por mês: escolha qualquer data em B25 para ver outro período.",
         "",
         "Inventário — preços e lucro",
-        "• Amarelo / Azul / Verde — preços sugeridos para 0%, 15% e 30%.",
+        "• Amarelo / Azul / Verde — preços sugeridos para 0%, 15% e 30% de lucro líquido.",
         "• Taxa cobrada (R$) = valor de venda × taxa da plataforma (B1).",
         "• Lucro após taxa = venda − taxa cobrada − (compra + restauração).",
         "  Cores: vermelho <0%; amarelo 0–4,99%; azul 5–15%; verde 15,01–30%; roxo >30%.",
         "",
-        "Fórmula de preço sugerido: (compra + restauração) × (1 + taxa + lucro%)",
-        "Taxa padrão 10% (célula B1 do Inventário).",
+        "Fórmula de preço sugerido: (compra + restauração) × (1 + lucro%) ÷ (1 − taxa)",
+        "Assim o preço 0% cobre custos e a taxa, sem prejuízo. Taxa padrão 10% (B1).",
     ]
     for i, line in enumerate(lines, start=1):
         cell = ws.cell(i, 1, line)
